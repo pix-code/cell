@@ -1,0 +1,14 @@
+/*
+ * goal: readable interpreted language that can be used for calculations
+ */
+
+fn print(put one): int {
+  put("hello, world! " + one)
+  ret 1;
+}
+
+fn main() {
+  var: int = print(1)
+  put("var: " + var)
+}
+

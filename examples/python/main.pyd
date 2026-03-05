@@ -1,0 +1,26 @@
+  0           RESUME                   0
+
+  1           LOAD_NAME                0 (range)
+              PUSH_NULL
+              LOAD_SMALL_INT          10
+              CALL                     1
+              GET_ITER
+      L1:     FOR_ITER                24 (to L2)
+              STORE_NAME               1 (i)
+
+  2           LOAD_NAME                2 (print)
+              PUSH_NULL
+              LOAD_CONST               1 ('hello ')
+              LOAD_NAME                3 (str)
+              PUSH_NULL
+              LOAD_NAME                1 (i)
+              CALL                     1
+              BINARY_OP                0 (+)
+              CALL                     1
+              POP_TOP
+              JUMP_BACKWARD           26 (to L1)
+
+  1   L2:     END_FOR
+              POP_ITER
+              LOAD_CONST               2 (None)
+              RETURN_VALUE
