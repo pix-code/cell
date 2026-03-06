@@ -2,7 +2,7 @@
  * goal: readable interpreted language that can be used for calculations
  */
 
-fn print(put one): int {
+fn print(int one): int {
   put("hello, world! " + one)
   ret 1;
 }
