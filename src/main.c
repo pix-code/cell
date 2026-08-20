@@ -1,218 +1,293 @@
-#include <assert.h>
-#include <ctype.h>
-#include <signal.h>
+#include <stdbool.h>
+#include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
-enum LEXEME {
-  NUM,
-  ADD,
-  SUB,
-  MUL,
-  DIV,
-};
+#define STACK_SIZE 4
+#define STACK_GROW 2
 
-typedef struct token {
-  enum LEXEME type;
-  char value;
+// lexical analyzer tokens (lexemes)
+typedef enum {
+  TOK_EOF,
+  TOK_ATOM,
+  TOK_OP,
+} tag_t;
+
+// string stack
+typedef struct {
+  char *str;
+  size_t index;
+} str_feeder_t;
+
+// lexical analyzer token
+typedef struct {
+  tag_t tag;
+  union {
+    char op;
+    int atom;
+  };
 } token_t;
 
-typedef struct token_builder {
-  token_t token;
-  char *str;
-} token_builder_t;
+// lexical analyzer stack
+typedef struct {
+  token_t *data;
+  size_t top;
+  size_t size;
+} lex_stack_t;
 
+// token node for trees
 typedef struct token_node {
   struct token_node *left;
-  token_t token;
+  token_t data;
   struct token_node *right;
 } token_node_t;
 
-typedef struct token_node_builder {
-  token_node_t *node;
-  char *str;
-} token_node_builder_t;
+typedef struct {
+  float left;
+  float right;
+} binding_t;
 
-void print_file(FILE *fp) {
-  char buff[100];
-  while (fgets(buff, sizeof(buff), fp) != NULL) {
-    printf("%s", buff);
+void str_rev(char *s) {
+  int l = 0;
+  int r = strlen(s) - 1;
+  while (l < r) {
+    char t = s[l];
+    s[l] = s[r];
+    s[r] = t;
+    l++;
+    r--;
   }
-  pclose(fp);
 }
 
-int is_num(char *str) {
-  char c;
-  int i = 0;
-  while ((c = str[i]) != '\0') {
-    if (!isdigit(str[i])) {
-      return 0;
-    }
-    i++;
-  }
-  return 1;
+bool char_is_num(char c) { return c >= '0' && c <= '9'; }
+
+str_feeder_t *str_feeder_new(char *str) {
+  // TODO: error checking
+  int strc = strlen(str);
+  str_feeder_t *feeder = malloc(sizeof(str_feeder_t));
+
+  feeder->str = malloc(sizeof(char) * strc);
+  memcpy(feeder->str, str, strc);
+  feeder->index = 0;
+
+  return feeder;
 }
 
-token_node_t *new_node(token_node_t *left, token_t token, token_node_t *right) {
-  token_node_t *new = malloc(sizeof(token_node_t));
-  new->left = NULL;
-  new->right = NULL;
-  new->token = token;
+char str_feeder_next(str_feeder_t *feeder) {
+  char chr = feeder->str[feeder->index];
+  feeder->index++;
+  return chr;
+}
+
+char str_feeder_peek(str_feeder_t *feeder) {
+  return feeder->str[feeder->index];
+}
+
+void str_feeder_free(str_feeder_t *feeder) {
+  free(feeder->str);
+  free(feeder);
+}
+
+lex_stack_t *lex_stack_new() {
+  lex_stack_t *stack = malloc(sizeof(lex_stack_t));
+
+  stack->data = malloc(sizeof(token_t) * STACK_SIZE);
+  stack->top = -1;
+  stack->size = STACK_SIZE;
+
+  return stack;
+}
+
+void lex_stack_push(lex_stack_t *stack, token_t tok) {
+  if (stack->top + 1 >= stack->size) {
+    token_t *tmp =
+        realloc(stack->data, sizeof(token_t) * stack->size * STACK_GROW);
+    stack->data = tmp;
+    stack->size *= STACK_GROW;
+  }
+  stack->top++;
+  stack->data[stack->top] = tok;
+}
+
+token_t lex_stack_peek(lex_stack_t *stack) { return stack->data[stack->top]; }
+
+token_t lex_stack_pop(lex_stack_t *stack) {
+  stack->top--;
+  return stack->data[stack->top];
+}
+
+lex_stack_t *lex_stack_rev(lex_stack_t *lex) {
+  lex_stack_t *new = lex_stack_new();
+  for (int i = lex->top; i >= 0; i--) {
+    lex_stack_push(new, lex_stack_pop(lex));
+  }
   return new;
 }
 
-/*void parse(token_node_t *root) {
-  if (root != NULL) {
-    analyze(root->left);
-    analyze(root->right);
-    if (root->token.token_type == NUMBER) {
-      printf("push %d\n", root->token.value);
-    } else {
-      printf("pop rax\npop rbx\nadd rax rbx\npush rax\n");
+void lex_stack_print(lex_stack_t *lex) {
+  for (int i = lex->top; i >= 0; i--) {
+    token_t tok = lex->data[i];
+    if (tok.tag == TOK_ATOM) {
+      printf("<tag, %d> ", tok.atom);
+    } else if (tok.tag == TOK_OP) {
+      printf("<%c> ", tok.op);
+    } else if (tok.tag == TOK_EOF) {
+      printf("<EOF> ");
     }
   }
-}*/
+}
 
-token_builder_t analyze(char *str) {
-  int len = strpbrk(str, "1234567890") - str;
+void lex_stack_free(lex_stack_t *stack) {
+  free(stack->data);
+  free(stack);
+}
 
-  if (len > 0) {
-    char num_str[len];
-    memcpy(&num_str, str, len);
-    return (token_builder_t){(token_t){NUM, atoi(num_str)}, str + len};
+token_node_t *token_node_new() {
+  token_node_t *node = malloc(sizeof(token_node_t));
+  node->left = NULL;
+  node->right = NULL;
+  // node->data = (token_t){NULL, .atom = NULL};
+  return node;
+}
+
+token_node_t *token_node_new_data(token_t data) {
+  token_node_t *node = token_node_new();
+  node->data = data;
+  return node;
+}
+
+void token_node_print(token_node_t *node) {
+  if (node != NULL) {
+    if (node->data.tag == TOK_OP) {
+      printf("(");
+      printf("%c ", node->data.op);
+      token_node_print(node->left);
+      printf(" ");
+      token_node_print(node->right);
+      printf(")");
+    } else {
+      printf("%d", node->data.atom);
+    }
+  }
+}
+
+void token_node_free(token_node_t *node) {
+  if (node != NULL) {
+    token_node_free(node->left);
+    token_node_free(node->right);
+    free(node);
+  }
+}
+
+lex_stack_t *lex_analyze(char *s) {
+  str_feeder_t *strf = str_feeder_new(s);
+  lex_stack_t *lexs = lex_stack_new();
+  size_t len = strlen(strf->str) - 1;
+
+  while (strf->index <= len + 1) {
+    char chr = str_feeder_next(strf);
+    token_t tok;
+
+    if (char_is_num(chr)) {
+      int num = chr - '0';
+      while (char_is_num(str_feeder_peek(strf))) {
+        num = num * 10 + str_feeder_next(strf);
+      }
+      tok = (token_t){TOK_ATOM, .atom = num};
+    } else {
+      switch (chr) {
+      case '\n':
+        tok = (token_t){TOK_EOF};
+        break;
+      case '+':
+      case '-':
+      case '*':
+      case '/':
+        tok = (token_t){TOK_OP, .op = chr};
+        break;
+      }
+    }
+
+    lex_stack_push(lexs, tok);
   }
 
-  enum LEXEME lex;
+  str_feeder_free(strf);
+  return lexs;
+}
 
-  switch (str[0]) {
-  case ' ':
-    return analyze(str + 1);
-    break;
+binding_t binding_power(token_t op) {
+  switch (op.op) {
   case '+':
-    lex = ADD;
-    break;
   case '-':
-    lex = SUB;
+    return (binding_t){1.0, 1.1};
     break;
   case '*':
-    lex = MUL;
-    break;
   case '/':
-    lex = DIV;
+    return (binding_t){2.0, 2.1};
     break;
   default:
-    abort();
-    break;
+    return (binding_t){-1, -1};
   }
-
-  return (token_builder_t){(token_t){lex, str[0]}, str + 1};
 }
 
-token_node_builder_t factor(char *str) {
-  token_builder_t analyzer = analyze(str);
+token_node_t *parse_lex(lex_stack_t *lex, float min_bp) {
+  token_t left = lex_stack_pop(lex);
+  token_node_t *node = token_node_new();
 
-  if (analyzer.token.type == NUM) {
-    return (token_node_builder_t){new_node(NULL, analyzer.token, NULL),
-                                  analyzer.str};
+  while (true) {
+    token_t op = lex_stack_pop(lex);
+    if (op.tag == TOK_EOF) {
+      break;
+    }
+    binding_t power = binding_power(op);
+    if (power.left < min_bp) {
+      break;
+    }
+    token_node_t *right = parse_lex(lex, power.right);
+    node->data = op;
+    node->left = token_node_new_data(left);
+    node->right = right;
   }
-
-  abort();
-}
-
-token_node_builder_t term(char *str) {
-  token_node_builder_t left = factor(str);
-  str = left.str;
-  token_builder_t analyzer = analyze(str);
-  str = analyzer.str;
-  token_t token = analyzer.token;
-
-  while (analyzer.token.type == MUL || analyzer.token.type == DIV) {
-    token_node_builder_t right = factor(str);
-    str = right.str;
-    return (token_node_builder_t){
-        new_node(left.node, token, right.node),
-        str,
-    };
-  }
+  return node;
 }
 
 int main(int argc, char *argv[]) {
-  // token_node_t *root = new_node((token_t) {OPERATOR, '+'});
-  // root->left = new_node((token_t) {NUMBER, 1});
-  // root->right = new_node((token_t) {NUMBER, 2});
-
-  // analyze(root);
+  // rough compillation process:
+  // src -> str_feeder
+  // str_feeder -> lex_stack
+  // lex_stack -> token_nodes
+  // token_nodes -> assembly
 
   char *filename = argc == 2 ? argv[1] : "main.cell";
 
+  // == analysis ==
   puts("==  reading src  ==");
   FILE *src = fopen(filename, "r");
-  FILE *out = fopen("cell.asm", "w");
 
-  // == analysis ==
-  // -- lexical analysis --
-  /*char line[100];
-  token_t tokens[100];
-  char *token;
-  int tokens_len = 0;
-  while (fgets(line, sizeof(line), src)) {
-    line[strcspn(line, "\n")] = '\0';
-    token = strtok(line, " ");
-    while (token != NULL) {
-      if (is_num(token)) {
-        tokens[tokens_len] = (token_t){NUMBER, atoi(token)};
-      } else {
-        tokens[tokens_len] = (token_t){OPERATOR, token[0]};
-      }
-      tokens_len++;
-      token = strtok(NULL, " ");
-    }
-  }
-
-  for (int j = 0; j < tokens_len; j++) {
-    if (tokens[j].token_type == NUMBER) {
-      printf("<id, %d> ", tokens[j].value);
-    } else {
-      printf("<%c> ", tokens[j].value);
-    }
-  }*/
-
-  // STAGES OF PROCESSING
-  // lecical analyzer gets next token
-  // syntax analyzer analyzes all additions
-  // syntax analyzer analyzes all multipications
-
-  // -- syntax analysis --
-  // multiplication
-
-  // addition
-
+  char buff[256];
+  fgets(buff, sizeof(buff), src);
   fclose(src);
-  printf("\n\n");
+
+  puts("-- lex stack --");
+  lex_stack_t *lex_stack = lex_analyze(buff);
+  lex_stack = lex_stack_rev(lex_stack);
+  lex_stack_print(lex_stack);
+  puts("");
+
+  puts("-- syntax tree --");
+  token_node_t *token_tree = parse_lex(lex_stack, 0.0);
+  token_node_print(token_tree);
+  puts("");
+
+  lex_stack_free(lex_stack);
+  token_node_free(token_tree);
 
   // == synthesis ==
-  puts("==  writing assembly  ==");
-  fprintf(out, ".intel_syntax noprefix\n"
-               ".section .text\n"
-               ".global _start\n"
-               "\n"
-               "_start:\n");
-  for (int i = 0; i < tokens_len; i++) {
-    if (tokens[i].type == NUMBER) {
-      fprintf(out, "  push %d\n", tokens[i].value);
-    } else if (tokens[i].type == OPERATOR) {
-      fprintf(out, "  pop rbx\n"
-                   "  pop rax\n"
-                   "  add rax, rbx\n"
-                   "  push rax\n");
-    }
-  }
-  fprintf(out, "  mov rax, 60\n"
-               "  pop rdi\n"
-               "  syscall\n");
+  puts("==  writing asm  ==");
+  FILE *out = fopen("cell.asm", "w");
+
   fclose(out);
-  print_file(fopen("cell.asm", "r"));
 
   return 0;
 }
